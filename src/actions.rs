@@ -1,32 +1,61 @@
-use diesel::prelude::*;
+use crate::actions;
+use crate::db::DbPool;
 use crate::models::{BlogPost, NewBlogPost, UpdatedBlogPost};
-use crate::schema::blog_posts::dsl::*;
+use actix_web::error::ErrorInternalServerError;
+use diesel::prelude::*;
+use std::convert::TryInto;
+use actix_web::{web};
+use actix_web::web::Path;
+use actix_web::web::Json;
 
-pub fn get_all_blog_posts(conn: &SqliteConnection) -> QueryResult<Vec<BlogPost>> {
-    blog_posts.load::<BlogPost>(conn)
+
+pub async fn get_all_blog_posts(pool: &DbPool) -> Result<Vec<BlogPost>, actix_web::Error> {
+    let conn = pool.get().map_err(ErrorInternalServerError)?;
+    let blog_posts = web::block(move || actions::get_all_blog_posts(&conn))
+        .await
+        .map_err(ErrorInternalServerError)?;
+    Ok(blog_posts)
 }
 
-pub fn get_blog_post(conn: &SqliteConnection, post_id: i32) -> QueryResult<Option<BlogPost>> {
-    blog_posts.find(post_id).first::<BlogPost>(conn).optional()
+pub async fn get_blog_post(id: &Path<i32>, pool: &DbPool) -> Result<BlogPost, actix_web::Error> {
+    let conn = pool.get().map_err(ErrorInternalServerError)?;
+    let post_id = id.into_inner();
+    let blog_post = web::block(move || actions::get_blog_post(&conn, post_id))
+        .await
+        .map_err(ErrorInternalServerError)?
+        .ok_or_else(|| actix_web::error::ErrorNotFound(format!("Blog post {} not found", post_id)))?;
+    Ok(blog_post)
 }
 
-pub fn create_blog_post(conn: &SqliteConnection, new_post: &NewBlogPost) -> QueryResult<BlogPost> {
-    diesel::insert_into(blog_posts)
-        .values(new_post)
-        .execute(conn)?;
-
-    blog_posts.order(created_at.desc()).first(conn)
+pub async fn create_blog_post(new_blog_post: &Json<NewBlogPost<'_>>, pool: &DbPool) -> Result<BlogPost, actix_web::Error> {
+    let conn = pool.get().map_err(ErrorInternalServerError)?;
+    let new_post: NewBlogPost = new_blog_post.into_inner().try_into().map_err(|e| actix_web::error::ErrorBadRequest(e.to_string()))?;
+    let blog_post = web::block(move || actions::create_blog_post(&conn, &new_post))
+        .await
+        .map_err(ErrorInternalServerError)?;
+    Ok(blog_post)
 }
 
-pub fn update_blog_post(conn: &SqliteConnection, post_id: i32, updated_post: &UpdatedBlogPost) -> QueryResult<Option<BlogPost>> {
-    diesel::update(blog_posts.find(post_id))
-        .set((title.eq(&updated_post.title), content.eq(&updated_post.content), updated_at.eq(chrono::Local::now().naive_local())))
-        .execute(conn)?;
-
-    get_blog_post(conn, post_id)
+pub async fn update_blog_post(id: &Path<i32>, updated_blog_post: &Json<UpdatedBlogPost<'_>>, pool: &DbPool) -> Result<BlogPost, actix_web::Error> {
+    let conn = pool.get().map_err(ErrorInternalServerError)?;
+    let post_id = id.into_inner();
+    let updated_post: UpdatedBlogPost = updated_blog_post.into_inner().try_into().map_err(|e| actix_web::error::ErrorBadRequest(e.to_string()))?;
+    let blog_post = web::block(move || actions::update_blog_post(&conn, post_id, &updated_post))
+        .await
+        .map_err(ErrorInternalServerError)?
+        .ok_or_else(|| actix_web::error::ErrorNotFound(format!("Blog post {} not found", post_id)))?;
+Ok(blog_post)
 }
-
-pub fn delete_blog_post(conn: &SqliteConnection, post_id: i32) -> QueryResult<bool> {
-    let rows_deleted = diesel::delete(blog_posts.find(post_id)).execute(conn)?;
-    Ok(rows_deleted > 0)
-}
+pub async fn delete_blog_post(id: &Path<i32>, pool: &DbPool) -> Result<(), actix_web::Error> {
+    let conn = pool.get().map_err(ErrorInternalServerError)?;
+    let post_id = id.into_inner();
+    let deleted = web::block(move || actions::delete_blog_post(&conn, post_id))
+    .await
+    .map_err(ErrorInternalServerError)?;
+    
+    if deleted {
+        Ok(())
+    } else {
+        Err(actix_web::error::ErrorNotFound(format!("Blog post {} not found", post_id)))
+    }
+}  

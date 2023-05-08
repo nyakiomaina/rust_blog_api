@@ -1,5 +1,5 @@
-use diesel::table;
-// use diesel::types::{Int4, Text, Timestamp, Varchar};
+#[macro_use]
+extern crate diesel;
 
 table! {
     blog_posts (id) {
@@ -10,3 +10,5 @@ table! {
         updated_at -> Timestamp,
     }
 }
+
+allow_tables_to_appear_in_same_query!(blog_posts,);
